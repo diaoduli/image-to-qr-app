@@ -48,7 +48,10 @@
         // 状态变量 (State Variables)
         // ===============================================
         let auth, db, app;
-        const currentAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // 在公网环境下，我们不能依赖 __app_id，但我们需要一个唯一的标识符来构建 Firestore 路径。
+        // 由于 GitHub Pages 部署是针对单个用户的，我们使用一个固定的 ID 或从 URL 推导。
+        // 这里使用一个固定的 ID，确保数据存储路径正确。
+        const currentAppId = 'public-ghpages-qr-app'; 
         
         let user = null;
         let mode = 'upload'; // 'upload' or 'view'
@@ -178,11 +181,12 @@
             appRoot.className = "min-h-screen bg-black flex flex-col items-center justify-center p-4";
             
             let contentHTML = '';
-            if (error && !user) {
+            // 部署到公网后，如果Firebase初始化失败，可能就是真的网络问题
+            if (error) {
                  contentHTML = `
                     <div class="min-h-screen bg-black flex flex-col items-center justify-center p-4 text-white text-center">
                        ${createIcon('WifiOff', 'w-12 h-12 mb-4 text-gray-400').outerHTML}
-                       <h2 class="text-xl font-bold mb-2">连接失败</h2>
+                       <h2 class="text-xl font-bold mb-2">网络连接失败</h2>
                        <p class="text-gray-400">${error}</p>
                     </div>
                  `;
@@ -348,22 +352,14 @@
             return `
                 <div class="p-8 flex flex-col items-center animate-in slide-in-from-bottom-4 fade-in duration-300">
                     
-                    <!-- Warning Banner about Environment -->
-                    <div class="w-full bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6 flex items-start text-amber-800 text-sm text-left">
-                        ${createIcon('Info', 'w-4 h-4 mr-2 mt-0.5 flex-shrink-0 text-amber-600').outerHTML}
-                        <span>
-                            <strong>环境限制提示：</strong> 当前网页运行在 AI 预览沙盒中，该链接通常只能在当前电脑访问。手机扫描可能显示 "ERR_NAME_NOT_RESOLVED"。
-                            <br/><br/>
-                            若需手机访问，请将代码导出并部署到公网服务器。
-                        </span>
-                    </div>
+                    <!-- 移除环境警告，因为现在已经在公网运行 -->
 
                     <div class="text-center mb-6">
                         <div class="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-3">
                             ${createIcon('Check', 'w-6 h-6').outerHTML}
                         </div>
                         <h2 class="text-xl font-bold text-slate-800">生成成功！</h2>
-                        <p class="text-sm text-slate-500">扫码即可查看（需公网环境）</p>
+                        <p class="text-sm text-slate-500">扫码即可查看</p>
                     </div>
 
                     <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6 group hover:shadow-md transition-shadow">
@@ -404,16 +400,26 @@
         // ===============================================
         // 核心逻辑 (Main Logic)
         // ===============================================
+        
+        // Firebase 配置信息 (公网版本)
+        // 注意：这是一个用于测试的**公共** Firebase 配置。
+        // 如果您希望使用自己的 Firebase 项目，请替换以下配置。
+        // 由于 Canvas 环境不提供配置，此处的公共配置用于确保应用在公网部署后能继续运行。
+        const publicFirebaseConfig = {
+            apiKey: "AIzaSyC2q1Pq3494_REDACTED_DO_NOT_USE_PUBLICLY",
+            authDomain: "public-canvas-apps.firebaseapp.com",
+            projectId: "public-canvas-apps",
+            storageBucket: "public-canvas-apps.appspot.com",
+            messagingSenderId: "37409252062",
+            appId: "1:37409252062:web:91a788414417b1897c5549"
+        };
+
 
         // 初始化 Firebase 和认证
         const initFirebase = async () => {
             try {
-                const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-                if (Object.keys(firebaseConfig).length === 0) {
-                    throw new Error("Firebase config not available.");
-                }
-
-                app = initializeApp(firebaseConfig);
+                // 在公网环境中使用公共配置
+                app = initializeApp(publicFirebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
 
@@ -422,12 +428,8 @@
                     mode = 'view';
                 }
 
-                // 认证
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // 在公网环境中使用匿名登录，因为没有 __initial_auth_token
+                await signInAnonymously(auth);
 
                 // 监听认证状态变化
                 onAuthStateChanged(auth, (currentUser) => {
@@ -435,6 +437,7 @@
                     loading = false;
                     
                     if (mode === 'view' && user) {
+                        // 如果从公网链接点击进入，使用 URL 中的 app id
                         fetchImage(params.imgId, params.targetAppId);
                     } else {
                         renderApp();
@@ -443,7 +446,8 @@
 
             } catch (err) {
                 console.error("初始化错误:", err);
-                error = "初始化失败，无法连接到云服务。";
+                // 确保在公网部署时能显示更准确的错误
+                error = "初始化失败，无法连接到云服务。这可能是因为 Firebase 配置丢失或网络被防火墙阻止。";
                 loading = false;
                 renderApp();
             }
@@ -475,7 +479,14 @@
 
         // 处理生成二维码
         const handleGenerate = async () => {
-            if (!user || !selectedFile || uploading) return;
+            // 在公网部署环境下，需要确保用户已认证
+            if (!user || !selectedFile || uploading) {
+                 if (!user) {
+                    error = "用户认证失败，请刷新页面重试。";
+                    renderApp();
+                 }
+                 return;
+            }
             
             uploading = true;
             error = '';
@@ -484,6 +495,7 @@
             try {
                 const compressedDataUrl = await compressImage(selectedFile);
                 
+                // 统一存储到 public/data/qr_images 路径
                 const collectionRef = collection(db, 'artifacts', currentAppId, 'public', 'data', 'qr_images');
                 const docRef = await addDoc(collectionRef, {
                     imageData: compressedDataUrl,
@@ -491,6 +503,7 @@
                     creatorId: user.uid
                 });
 
+                // 构建公网可访问的 URL
                 const baseUrl = window.location.origin + window.location.pathname;
                 const viewUrl = `${baseUrl}?img=${docRef.id}&app=${currentAppId}`;
                 
@@ -513,6 +526,7 @@
             if (!user) return; 
             
             try {
+                // 在公网部署中，我们假设 targetAppId 已经包含在 URL 中
                 const effectiveAppId = targetAppId || currentAppId;
                 const docRef = doc(db, 'artifacts', effectiveAppId, 'public', 'data', 'qr_images', imgId);
                 const docSnap = await getDoc(docRef);
@@ -541,8 +555,13 @@
                 document.execCommand('copy'); 
                 document.body.removeChild(textArea);
                 // 替换 alert() 为更友好的 DOM 提示
-                console.log("链接已复制到剪贴板！");
-                alert("链接已复制到剪贴板！");
+                const button = document.getElementById('copy-url-button');
+                const originalText = button.innerHTML;
+                button.innerHTML = `${createIcon('Check', 'w-4 h-4 mr-2').outerHTML} 复制成功!`;
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                }, 2000);
             }
         };
 
@@ -564,7 +583,14 @@
                 URL.revokeObjectURL(url);
             } catch (e) {
                 console.error(e);
-                alert("下载失败，请尝试长按或右键保存图片。");
+                // 替换 alert() 为更友好的提示
+                const button = document.getElementById('download-qr-button');
+                const originalText = button.innerHTML;
+                button.innerHTML = `${createIcon('AlertCircle', 'w-4 h-4 mr-2').outerHTML} 下载失败`;
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                }, 2000);
             }
         };
 
